@@ -50,6 +50,20 @@ def git(*args, dir:, env: {}, auth: false)
   output.strip
 end
 
+# Only upload regular files that are really inside folder. Following a symlink
+# could publish files from the runner, e.g. ones containing secrets.
+def uploadable?(file_path, folder)
+  if File.symlink?(file_path) || !File.file?(file_path)
+    puts "!! Skipping #{file_path}: not a regular file"
+    return false
+  end
+  unless File.realpath(file_path).start_with?(File.realpath(folder) + File::SEPARATOR)
+    puts "!! Skipping #{file_path}: outside #{folder}"
+    return false
+  end
+  true
+end
+
 def get_main_branch(repo_dir)
   heads = with_retries("Listing branches") { git("ls-remote", "--heads", "origin", "main", "master", dir: repo_dir, auth: true) }
   heads.include?("refs/heads/main") ? "main" : "master"
@@ -83,13 +97,18 @@ crossref_uploaded_path = "#{branch}/10.21105.#{branch}.crossref.xml"
 
 # Map of local file => path in the papers repo
 files_to_upload = {}
-files_to_upload[File.expand_path(pdf_path)] = pdf_uploaded_path if !pdf_path.empty? && File.exist?(pdf_path)
-files_to_upload[File.expand_path(crossref_path)] = crossref_uploaded_path if !crossref_path.empty? && File.exist?(crossref_path)
+if !pdf_path.empty? && File.exist?(pdf_path) && uploadable?(pdf_path, File.dirname(pdf_path))
+  files_to_upload[File.expand_path(pdf_path)] = pdf_uploaded_path
+end
+if !crossref_path.empty? && File.exist?(crossref_path) && uploadable?(crossref_path, File.dirname(crossref_path))
+  files_to_upload[File.expand_path(crossref_path)] = crossref_uploaded_path
+end
 
 # Add all files in the JATS' directory if present
 if !jats_path.empty? && File.exist?(jats_path)
   jats_files_folder = File.dirname(jats_path)
   Dir[File.join(jats_files_folder, "**/*.*")].each do |jats_file|
+    next unless uploadable?(jats_file, jats_files_folder)
     jats_file_name = Pathname(jats_file).relative_path_from(jats_files_folder).to_s
     uploaded_path = jats_file_name == "paper.jats" ? jats_uploaded_path : "#{branch}/paper.jats/#{jats_file_name}"
     files_to_upload[File.expand_path(jats_file)] = uploaded_path
