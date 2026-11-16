@@ -34,13 +34,18 @@ def with_retries(description)
 end
 
 # Run a git command in dir, authenticating with the GitHub token when auth is true.
+# The auth header is passed through the environment, scoped to github.com, so the
+# token doesn't appear in the process list.
 # Lazy fetching is disabled so a command that needs the papers' blobs fails
 # instead of silently downloading the whole repository.
 def git(*args, dir:, env: {}, auth: false)
-  cmd = ["git"]
-  cmd += ["-c", "http.extraheader=AUTHORIZATION: basic #{["x-access-token:#{gh_token}"].pack("m0")}"] if auth
-  cmd += args
-  output, status = Open3.capture2e({ "GIT_NO_LAZY_FETCH" => "1" }.merge(env), *cmd, chdir: dir)
+  git_env = { "GIT_NO_LAZY_FETCH" => "1" }
+  if auth
+    git_env.merge!("GIT_CONFIG_COUNT" => "1",
+                   "GIT_CONFIG_KEY_0" => "http.https://github.com/.extraheader",
+                   "GIT_CONFIG_VALUE_0" => "AUTHORIZATION: basic #{["x-access-token:#{gh_token}"].pack("m0")}")
+  end
+  output, status = Open3.capture2e(git_env.merge(env), "git", *args, chdir: dir)
   raise GitError, "!! ERROR: git #{args.first} failed:\n#{output.gsub(gh_token, "***")}" unless status.success?
   output.strip
 end
